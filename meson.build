@@ -15,16 +15,23 @@ sources = [
 ]
 
 arena_pointer_test = executable(
-  'POINTER TEST (ALL IN ONE)',
+  'POINTER TEST (TEST)',
   sources + ['test_cases/arena_pointer/arena_pointer_test.c'],
   install : false,
 )
 
 arena_layout_test = executable(
-  'LAYOUT TEST (ALL IN ONE)',
+  'LAYOUT TEST (TEST)',
   sources + ['test_cases/arena_layout/arena_layout_test.c'],
+  install : false,
+)
+
+arena_thread_test = executable(
+  'ARENA THREAD TEST (TEST)',
+  sources + ['test_cases/arena_thread/arena_thread_test.c'],
   install : false,
 )
 
 test('TEST POINTER', arena_pointer_test)
 test('TEST LAYOUT', arena_layout_test)
+test('TEST THREAD', arena_thread_test)

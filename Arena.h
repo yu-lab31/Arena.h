@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -11,6 +12,11 @@
 #include <unistd.h>
 
 #define ARN_ERRNO int
+
+typedef atomic_uint_fast8_t arena_atomic_bitmap_t;
+typedef uint8_t arena_bitmap_t;
+#define ARN_ATOMIC_BITMAP_SZ_IN_BYTE (sizeof(arena_atomic_bitmap_t))
+#define ARN_ATOMIC_BITMAP_SZ_IN_BIT ((sizeof(arena_atomic_bitmap_t)) << 3)
 
 // ==== ARNEA POINTER ====
 
@@ -73,14 +79,15 @@ static inline ARN_ERRNO arena_name_memory_space(void *start, size_t length,
     } while (0)
 
 #define ARN_MAXIMUM_THD_NUM                                                    \
-    ((size_t)1 << 12) // 4K (maximum number of arena threads)
+    (((size_t)1 << 12) -                                                       \
+     1) // 4K - 1 (maximum number of arena threads, tid 0 reserved)
 
 #define ARN_MEMORY_SZ ((size_t)1 << 37) // 128G (Bytes)
 
 #define ARN_STK_SZ ((size_t)1 << 34) // 16G (Bytes)
 
 // Space for each thread to hold its arena pointer related data.
-#define ARN_THD_STK_SZ (ARN_STK_SZ / ARN_MAXIMUM_THD_NUM) // 4M (Bytes)
+#define ARN_THD_STK_SZ (ARN_STK_SZ / (ARN_MAXIMUM_THD_NUM + 1)) // 4M (Bytes)
 
 #define ARN_THD_STK_HEADER_SZ ((size_t)64) // (Bytes)
 
@@ -98,6 +105,21 @@ static inline ARN_ERRNO arena_name_memory_space(void *start, size_t length,
     (ARN_THD_STK_MAXIMUM_LOC_POINTER_SZ / ARN_POINTER_SZ)
 
 // ==== ARENA LAYOUT ====
+
+// ==== ARENA THREADS ====
+
+#define ARN_TID_BITMAP_NUM                                                     \
+    ((ARN_MAXIMUM_THD_NUM + 1) / ARN_ATOMIC_BITMAP_SZ_IN_BIT)
+
+// A 1 at index 0, others are 0s.
+extern arena_atomic_bitmap_t arena_tids[ARN_TID_BITMAP_NUM + 1];
+
+/* Find an available thread id, if it does not exist, return -1. */
+static inline int arena_next_tid(void);
+/* Free an occupied thread id, ignore illegal specify. */
+static inline void arena_free_tid(int tid);
+
+// ==== ARNEA THREADS ====
 
 // ==== IMPLEMENTATION ====
 
@@ -121,5 +143,48 @@ static inline ARN_ERRNO arena_name_memory_space(void *start, size_t length,
                ? 0
                : errno;
 }
+
+static inline int arena_next_tid(void)
+{
+    const size_t MAXIMUM_TRY_TIMES = 3;
+
+    for (size_t times_tried = 0; times_tried < MAXIMUM_TRY_TIMES;
+         times_tried++) {
+        for (int bi = 0; (size_t)bi < ARN_ATOMIC_BITMAP_SZ_IN_BIT; bi++) {
+            for (int wi = 0; (size_t)wi < ARN_TID_BITMAP_NUM; wi++) {
+                arena_bitmap_t bm = atomic_load(&arena_tids[wi]);
+                assert(wi | bi | bm);
+
+                while (!(bm & ((arena_bitmap_t)1 << bi))) {
+                    if (atomic_compare_exchange_weak_explicit(
+                            &arena_tids[wi], &bm,
+                            bm | ((arena_bitmap_t)1 << bi),
+                            memory_order_acq_rel, memory_order_acquire)) {
+                        return wi * (int)ARN_ATOMIC_BITMAP_SZ_IN_BIT + bi;
+                    }
+                }
+            }
+        }
+    }
+
+    return -1;
+}
+
+static inline void arena_free_tid(int tid)
+{
+    if (tid < 0 || ARN_MAXIMUM_THD_NUM <= (size_t)tid)
+        return;
+
+    int wi = tid / ARN_ATOMIC_BITMAP_SZ_IN_BIT,
+        bi = tid % ARN_ATOMIC_BITMAP_SZ_IN_BIT;
+
+    atomic_fetch_and(&arena_tids[wi], ~((arena_bitmap_t)1 << bi));
+}
+
+// ==== IMPLEMENTATION ====
+
+#ifdef ARENA_IMPL__
+arena_atomic_bitmap_t arena_tids[ARN_TID_BITMAP_NUM + 1] = {1};
+#endif
 
 #endif // ARENA_H__
