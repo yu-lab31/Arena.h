@@ -3,7 +3,7 @@ project(
   'c',
   meson_version : '>= 1.3.0',
   version : '0.1',
-  default_options : ['warning_level=3'],
+  default_options : ['c_std=gnu23', 'warning_level=3'],
 )
 
 home = include_directories('.')
@@ -32,6 +32,14 @@ arena_thread_test = executable(
   install : false,
 )
 
+arena_stack_test = executable(
+  'ARENA STACK TEST (TEST)',
+  sources + ['test_cases/arena_stack/arena_stack_test.c'],
+  install : false,
+)
+
 test('TEST POINTER', arena_pointer_test)
 test('TEST LAYOUT', arena_layout_test)
 test('TEST THREAD', arena_thread_test)
+test('TEST STACK', arena_stack_test)
+
